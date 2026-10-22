@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pocket Palette - palette extraction and contrast checker</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1c1c1c;
+    --muted: #6b6b6b;
+    --line: #e3e3e0;
+    --accent: #2456e0;
+  }
+  body.dark {
+    --bg: #141417;
+    --panel: #1e1e22;
+    --ink: #f0f0ee;
+    --muted: #a3a3ab;
+    --line: #33333a;
+    --accent: #7aa2ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    padding: 24px;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 28px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  h2 { margin: 0 0 10px; font-size: 17px; }
+  #dropzone {
+    border: 2px dashed var(--line);
+    border-radius: 10px;
+    padding: 28px;
+    text-align: center;
+    color: var(--muted);
+    cursor: pointer;
+  }
+  #dropzone.over { border-color: var(--accent); color: var(--accent); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    font: inherit;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  button:disabled { opacity: .45; cursor: default; }
+  button.active { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #imgwrap { display: none; margin-top: 12px; }
+  #srcimg { max-width: 320px; max-height: 220px; border: 1px solid var(--line); border-radius: 8px; display: block; }
+  #srcimg.eyedrop { cursor: crosshair; }
+  .hint { font-size: 13px; color: var(--muted); }
+  #swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+  .swatch { width: 104px; text-align: center; }
+  .chip {
+    width: 104px; height: 64px; border-radius: 8px;
+    border: 1px solid var(--line); cursor: pointer;
+    padding: 0; display: block; position: relative;
+  }
+  .chip.is-bg { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .chip.is-fg { outline: 3px dashed var(--accent); outline-offset: 2px; }
+  .roletag {
+    position: absolute; top: 4px; left: 4px;
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 10px;
+    background: rgba(0, 0, 0, 0.65); color: #fff;
+  }
+  #matrix { overflow-x: auto; }
+  .swatch .hex { font-family: ui-monospace, monospace; font-size: 13px; margin: 4px 0 2px; }
+  .swatch .mini { display: flex; gap: 4px; justify-content: center; }
+  .swatch .mini button { padding: 2px 6px; font-size: 11px; }
+  table.matrix { border-collapse: collapse; font-size: 12px; }
+  table.matrix th, table.matrix td { border: 1px solid var(--line); padding: 6px 8px; text-align: center; }
+  table.matrix th.sq { width: 28px; height: 28px; padding: 0; }
+  .badge { display: inline-block; padding: 1px 7px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .aaa { background: #d7f2d7; color: #146314; }
+  .aa { background: #fff3c4; color: #7a5b00; }
+  .fail { background: #ffd9d9; color: #a11212; }
+  body.dark .aaa { background: #123f12; color: #b9e6b9; }
+  body.dark .aa { background: #4d3f00; color: #ffe27a; }
+  body.dark .fail { background: #571414; color: #ffb3b3; }
+  #preview-card { border: 1px solid var(--line); border-radius: 10px; padding: 18px; margin-top: 10px; }
+  #preview-card h3 { margin: 0 0 6px; }
+  #preview-card p { margin: 0; font-size: 14px; }
+  #empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  select, input[type=number] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  #nudge-out { margin-top: 8px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Pocket Palette</h1>
+  <p class="sub">Pull a palette out of any image, then check which color pairs read well together. Everything runs in your browser; nothing is uploaded.</p>
+
+  <section id="load-section">
+    <h2>1. Load an image</h2>
+    <div id="dropzone" tabindex="0">Drag an image here, paste one from the clipboard, or click to choose a file
+      <input type="file" id="filepick" accept="image/*" style="display:none">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button id="sample-btn">Use a sample image</button>
+      <button id="eyedrop-btn" disabled>Eyedropper: off</button>
+      <span class="hint">Eyedropper on: click anywhere on the loaded image to add that exact pixel color.</span>
+      <span id="dropper-out" class="hint"></span>
+    </div>
+    <div id="imgwrap">
+      <img id="srcimg" alt="loaded source image">
+      <p class="hint" id="imginfo"></p>
+    </div>
+  </section>
+
+  <section id="palette-section">
+    <h2>2. Palette</h2>
+    <div class="row">
+      <label>Colors: <input type="number" id="kcount" min="3" max="10" value="6" style="width:60px"></label>
+      <button id="reextract-btn" disabled>Re-extract</button>
+      <button id="theme-btn">Preview: light</button>
+    </div>
+    <div id="swatches"></div>
+    <div id="empty">No palette yet. Load an image above, or paste a palette link.</div>
+  </section>
+
+  <section id="matrix-section">
+    <h2>3. Contrast matrix</h2>
+    <p class="hint">Every color against every other, scored with the WCAG contrast ratio. Normal text needs 4.5 (AA) or 7.0 (AAA); large text needs 3.0 (AA).</p>
+    <p class="hint">Rows = background, columns = text.</p>
+    <div id="matrix"></div>
+  </section>
+
+  <section id="pair-section">
+    <h2>4. Pair preview</h2>
+    <div class="row">
+      <span class="hint">Click swatches to set:</span>
+      <button id="slot-bg" class="active">Background</button>
+      <button id="slot-fg">Text</button>
+    </div>
+    <div id="preview-card"><h3 id="pc-head">Headline</h3><p id="pc-body">Body copy shows how the pair reads at small sizes. Pick a background and a text color above.</p></div>
+    <div class="row" style="margin-top:10px">
+      <button id="nudge-btn" disabled>Nudge text color to AA</button>
+      <button id="nudge-add" disabled>Add nudged color</button>
+      <span id="nudge-out" class="hint"></span>
+    </div>
+  </section>
+
+  <section id="export-section">
+    <h2>5. Export</h2>
+    <div class="row">
+      <button id="exp-css">Copy CSS</button>
+      <button id="exp-tailwind">Copy Tailwind</button>
+      <button id="exp-json">Copy JSON</button>
+      <button id="exp-png">Download PNG strip</button>
+      <span id="exp-out" class="hint"></span>
+      <textarea id="exp-manual" readonly style="display:none;width:100%;height:110px;margin-top:8px;font:inherit"></textarea>
+    </div>
+  </section>
+
+  <footer><p class="hint">Pocket Palette. Built with plain HTML, CSS, and vanilla JavaScript. No libraries, no uploads.</p></footer>
+</div>
+<script>
+"use strict";
+// ---------- color math ----------
+function hexToRgb(hex) {
+  hex = hex.replace(/^#/, "");
+  if (hex.length === 3) hex = hex.split("").map(function (c) { return c + c; }).join("");
+  if (!/^[0-9a-fA-F]{6}$/.test(hex)) throw new Error("bad hex: " + hex);
+  return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+}
+function rgbToHex(r, g, b) {
+  function c(x) { x = Math.round(Math.max(0, Math.min(255, x))); var s = x.toString(16); return s.length === 1 ? "0" + s : s; }
+  return "#" + c(r) + c(g) + c(b);
+}
+function channelToLinear(v) {
+  v = v / 255;
+  return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+function relLum(hex) {
+  var rgb = hexToRgb(hex);
+  return 0.2126 * channelToLinear(rgb[0]) + 0.7152 * channelToLinear(rgb[1]) + 0.0722 * channelToLinear(rgb[2]);
+}
+function contrast(a, b) {
+  var l1 = relLum(a), l2 = relLum(b);
+  if (l1 < l2) { var t = l1; l1 = l2; l2 = t; }
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+function grade(ratio) {
+  if (ratio >= 7) return "aaa";
+  if (ratio >= 4.5) return "aa";
+  if (ratio >= 3) return "aa-large";
+  return "fail";
+}
+function gradeLabel(ratio) {
+  if (ratio >= 7) return "AAA";
+  if (ratio >= 4.5) return "AA";
+  if (ratio >= 3) return "AA large";
+  return "Fail";
+}
+// Display a ratio without ever rounding it up: WCAG says 4.497 must not be
+// reported as "4.50". The epsilon keeps an exact 21:1 from reading "20.99".
+function fmtRatio(r) {
+  return (Math.floor(r * 100 + 1e-9) / 100).toFixed(2);
+}
+function hexToHsl(hex) {
+  var rgb = hexToRgb(hex), r = rgb[0] / 255, g = rgb[1] / 255, b = rgb[2] / 255;
+  var max = Math.max(r, g, b), min = Math.min(r, g, b), h = 0, s = 0, l = (max + min) / 2;
+  if (max !== min) {
+    var d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+  }
+  return [h, s * 100, l * 100];
+}
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  var c = (1 - Math.abs(2 * l - 1)) * s;
+  var x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  var m = l - c / 2, r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; } else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255);
+}
+// Shift the lightness of fg (keeping hue and saturation) until it reaches
+// AA (4.5:1) against bg, taking the smallest possible move. Returns the
+// adjusted hex, or the original hex if it already passes, or null when no
+// lightness in [0,100] reaches AA.
+function nudgeToAA(fg, bg, target) {
+  target = target || 4.5;
+  fg = fg.toLowerCase(); bg = bg.toLowerCase();
+  if (contrast(fg, bg) >= target) return fg;
+  var hsl = hexToHsl(fg), h = hsl[0], s = hsl[1], l0 = hsl[2];
+  for (var d = 1; d <= 100; d++) {
+    var up = l0 + d, down = l0 - d, best = null;
+    if (up <= 100) { var cu = hslToHex(h, s, up); if (contrast(cu, bg) >= target) best = cu; }
+    if (down >= 0) { var cd = hslToHex(h, s, down); if (contrast(cd, bg) >= target) { if (!best) best = cd; } }
+    if (best) return best;
+  }
+  return null;
+}
+
+// ---------- palette extraction (k-means on downscaled pixels) ----------
+function mulberry32(seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function extractPalette(pixels, k, seed) {
+  // pixels: array of [r,g,b]. Returns up to k hex colors, deterministic for a seed.
+  if (!pixels.length) return [];
+  k = Math.max(1, Math.min(k, pixels.length));
+  var rnd = mulberry32(seed == null ? 1234 : seed);
+  var centroids = [];
+  var used = {};
+  while (centroids.length < k) {
+    var i = Math.floor(rnd() * pixels.length);
+    if (used[i]) continue;
+    used[i] = true;
+    centroids.push(pixels[i].slice());
+  }
+  var assign = new Array(pixels.length);
+  for (var iter = 0; iter < 12; iter++) {
+    var changed = false;
+    for (var p = 0; p < pixels.length; p++) {
+      var best = 0, bd = Infinity;
+      for (var c = 0; c < k; c++) {
+        var dr = pixels[p][0] - centroids[c][0],
+            dg = pixels[p][1] - centroids[c][1],
+            db = pixels[p][2] - centroids[c][2];
+        var d = dr * dr + dg * dg + db * db;
+        if (d < bd) { bd = d; best = c; }
+      }
+      if (assign[p] !== best) { assign[p] = best; changed = true; }
+    }
+    if (!changed) break;
+    var sums = [], counts = [];
+    for (var c2 = 0; c2 < k; c2++) { sums.push([0, 0, 0]); counts.push(0); }
+    for (var p2 = 0; p2 < pixels.length; p2++) {
+      var a = assign[p2];
+      sums[a][0] += pixels[p2][0]; sums[a][1] += pixels[p2][1]; sums[a][2] += pixels[p2][2];
+      counts[a]++;
+    }
+    for (var c3 = 0; c3 < k; c3++) {
+      if (counts[c3]) centroids[c3] = [sums[c3][0] / counts[c3], sums[c3][1] / counts[c3], sums[c3][2] / counts[c3]];
+    }
+  }
+  var counts2 = [];
+  for (var c4 = 0; c4 < k; c4++) counts2.push(0);
+  for (var p3 = 0; p3 < pixels.length; p3++) counts2[assign[p3]]++;
+  var order = [];
+  for (var c5 = 0; c5 < k; c5++) order.push(c5);
+  order.sort(function (a, b) { return counts2[b] - counts2[a]; });
+  // Skip empty clusters and dedupe by hex: on a flat image several seeds
+  // land on the same color, and the stranded centroids used to come back
+  // as duplicate swatches. A flat image may legitimately return fewer
+  // than k colors.
+  var seen = {}, out = [];
+  order.forEach(function (c) {
+    if (!counts2[c]) return;
+    var h = rgbToHex(centroids[c][0], centroids[c][1], centroids[c][2]);
+    if (!seen[h]) { seen[h] = 1; out.push(h); }
+  });
+  return out;
+}
+
+// ---------- state ----------
+var state = { palette: [], bg: null, fg: null, slot: "bg", eyedrop: false, dark: false, imageLoaded: false };
+
+function hashToPalette(hash) {
+  var m = hash.match(/^#p=([0-9a-fA-F]{3,6}(?:-[0-9a-fA-F]{3,6})*)$/);
+  if (!m) return null;
+  var out = [];
+  m[1].split("-").forEach(function (h) {
+    try { var rgb = hexToRgb(h); out.push(rgbToHex(rgb[0], rgb[1], rgb[2]).toLowerCase()); }
+    catch (e) { /* skip bad segment */ }
+  });
+  if (out.length > 12) out = out.slice(0, 12); // a crafted link must not build an O(n^2) table
+  return out.length ? out : null;
+}
+function paletteToHash(palette) {
+  return "#p=" + palette.map(function (h) { return h.replace(/^#/, ""); }).join("-");
+}
+function syncHash() {
+  if (typeof location === "undefined" || !location.replace) return;
+  if (state.palette.length) location.replace(paletteToHash(state.palette));
+  // An empty fragment scrolls the page to the top; replaceState avoids the jump.
+  else if (typeof history !== "undefined" && history.replaceState) history.replaceState(null, "", location.pathname + location.search);
+  else location.replace("#");
+}
+
+// ---------- export builders ----------
+function buildCSS(palette) {
+  var lines = [":root {"];
+  palette.forEach(function (h, i) { lines.push("  --palette-" + (i + 1) + ": " + h + ";"); });
+  lines.push("}");
+  return lines.join("\n");
+}
+function buildTailwind(palette) {
+  var lines = ["colors: {"];
+  lines.push("  palette: {");
+  palette.forEach(function (h, i) { lines.push("    " + (i + 1) + ": '" + h + "',"); });
+  lines.push("  },");
+  lines.push("}");
+  return lines.join("\n");
+}
+function buildJSON(palette) { return JSON.stringify(palette, null, 2); }
+// Copy text. Resolves true when it reached the clipboard, false when the
+// caller should show the text for manual copying instead.
+function copyText(text) {
+  function legacyCopy() {
+    if (typeof document === "undefined") return false;
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      ta.remove();
+      return !!ok;
+    } catch (e) { return false; }
+  }
+  if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(
+      function () { return true; },
+      function () { return legacyCopy(); });
+  }
+  return Promise.resolve(legacyCopy());
+}
+// Show the export result: a note when copying worked, otherwise the text in
+// a read-only, pre-selected textarea so the user can copy it by hand.
+function showCopyResult(ok, text, doneMsg) {
+  var note = el("exp-out"), man = el("exp-manual");
+  if (ok) { man.style.display = "none"; note.textContent = doneMsg; }
+  else {
+    man.value = text;
+    man.style.display = "block";
+    man.select();
+    note.textContent = "Clipboard blocked by the browser. Copy the text below manually.";
+  }
+}
+
+// ---------- rendering ----------
+function el(id) { return document.getElementById(id); }
+// After a re-render, put keyboard focus back on a swatch chip.
+function focusChip(i) {
+  var chips = el("swatches").querySelectorAll(".chip");
+  var t = chips[Math.min(i, chips.length - 1)];
+  if (t) t.focus();
+}
+function render() {
+  var sw = el("swatches");
+  sw.innerHTML = "";
+  el("empty").style.display = state.palette.length ? "none" : "block";
+  state.palette.forEach(function (hex, idx) {
+    var d = document.createElement("div");
+    d.className = "swatch";
+    var chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.style.background = hex;
+    var role = state.slot === "bg" ? "background" : "text";
+    var current = state.bg === hex ? " (current background)" : state.fg === hex ? " (current text)" : "";
+    chip.setAttribute("aria-label", "Set " + hex + " as " + role + current);
+    chip.title = "Set as " + role;
+    if (state.bg === hex) {
+      chip.classList.add("is-bg");
+      var tagB = document.createElement("span");
+      tagB.className = "roletag"; tagB.textContent = "BG";
+      chip.appendChild(tagB);
+    }
+    if (state.fg === hex) {
+      chip.classList.add("is-fg");
+      var tagF = document.createElement("span");
+      tagF.className = "roletag"; tagF.textContent = "Text";
+      chip.appendChild(tagF);
+    }
+    chip.addEventListener("click", function () {
+      if (state.slot === "bg") state.bg = hex; else state.fg = hex;
+      render(); renderPair();
+      focusChip(idx); // render() rebuilds the buttons; keep keyboard focus
+    });
+    var lab = document.createElement("div");
+    lab.className = "hex";
+    lab.textContent = hex;
+    var mini = document.createElement("div");
+    mini.className = "mini";
+    var edit = document.createElement("button");
+    edit.textContent = "edit";
+    edit.addEventListener("click", function () {
+      var v = prompt("Edit color (hex):", hex);
+      if (v == null) return;
+      try {
+        var rgb = hexToRgb(v.trim());
+        var nh = rgbToHex(rgb[0], rgb[1], rgb[2]).toLowerCase();
+        if (state.palette.some(function (h, i) { return i !== idx && h === nh; })) {
+          alert(nh + " is already in the palette.");
+          return;
+        }
+        state.palette[idx] = nh;
+        if (state.bg === hex) state.bg = nh;
+        if (state.fg === hex) state.fg = nh;
+        render(); renderMatrix(); renderPair(); syncHash();
+        focusChip(idx);
+      } catch (e) { alert("Not a valid hex color."); }
+    });
+    var del = document.createElement("button");
+    del.textContent = "remove";
+    del.addEventListener("click", function () {
+      state.palette.splice(idx, 1);
+      if (state.bg === hex) state.bg = null;
+      if (state.fg === hex) state.fg = null;
+      render(); renderMatrix(); renderPair(); syncHash();
+      focusChip(idx); // idx now points at the next swatch; clamps to the last
+    });
+    mini.appendChild(edit); mini.appendChild(del);
+    d.appendChild(chip); d.appendChild(lab); d.appendChild(mini);
+    sw.appendChild(d);
+  });
+  el("reextract-btn").disabled = !state.imageLoaded;
+  syncHash();
+}
+function renderMatrix() {
+  var m = el("matrix");
+  m.innerHTML = "";
+  var p = state.palette;
+  if (!p.length) { m.innerHTML = '<p class="hint">Load a palette to see the matrix.</p>'; return; }
+  var t = document.createElement("table");
+  t.className = "matrix";
+  var head = document.createElement("tr");
+  head.appendChild(document.createElement("th"));
+  p.forEach(function (h) {
+    var th = document.createElement("th");
+    th.className = "sq";
+    th.style.background = h;
+    th.title = h;
+    head.appendChild(th);
+  });
+  t.appendChild(head);
+  p.forEach(function (bgh) {
+    var tr = document.createElement("tr");
+    var th = document.createElement("th");
+    th.className = "sq";
+    th.style.background = bgh;
+    th.title = bgh;
+    tr.appendChild(th);
+    p.forEach(function (fgh) {
+      var td = document.createElement("td");
+      var r = contrast(fgh, bgh);
+      var g = grade(r);
+      var cls = g === "aa-large" ? "aa" : g;
+      td.innerHTML = '<div style="background:' + bgh + ";color:" + fgh + ';border-radius:4px;padding:2px 4px;margin-bottom:3px;font-weight:600">Aa</div>' +
+        '<div>' + fmtRatio(r) + ':1</div>' +
+        '<span class="badge ' + cls + '">' + gradeLabel(r) + "</span>";
+      td.title = fgh + " on " + bgh + " = " + fmtRatio(r) + ":1 (" + gradeLabel(r) + ")";
+      tr.appendChild(td);
+    });
+    t.appendChild(tr);
+  });
+  m.appendChild(t);
+}
+function renderPair() {
+  var card = el("preview-card");
+  var bg = state.bg || "#ffffff", fg = state.fg || "#1c1c1c";
+  card.style.background = bg;
+  el("pc-head").style.color = fg;
+  el("pc-body").style.color = fg;
+  var r = contrast(fg, bg);
+  var hasBoth = !!(state.bg && state.fg);
+  el("nudge-btn").disabled = !hasBoth;
+  el("nudge-out").textContent = hasBoth
+    ? "Ratio " + fmtRatio(r) + ":1, " + gradeLabel(r) + " for normal text."
+    : "";
+  el("nudge-add").disabled = true; // a new pair invalidates the last nudge
+  state.nudgedColor = null;
+}
+
+// ---------- image handling ----------
+function samplePixels(img, maxSide) {
+  maxSide = maxSide || 120;
+  var scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+  var w = Math.max(1, Math.round(img.width * scale));
+  var h = Math.max(1, Math.round(img.height * scale));
+  var cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  var ctx = cv.getContext("2d");
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, w, h);
+  var data = ctx.getImageData(0, 0, w, h).data;
+  var out = [];
+  for (var i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue;
+    out.push([data[i], data[i + 1], data[i + 2]]);
+  }
+  return out;
+}
+function setPaletteFromImage(img) {
+  var k = parseInt(el("kcount").value, 10) || 6;
+  k = Math.max(3, Math.min(10, k));
+  var pixels = samplePixels(img);
+  state.palette = extractPalette(pixels, k, 20261020);
+  state.imageLoaded = true;
+  el("imgwrap").style.display = "block";
+  el("imginfo").textContent = pixels.length
+    ? img.width + "x" + img.height + " px, sampled " + pixels.length + " pixels."
+    : "No visible pixels in this image (fully transparent?). Palette left empty.";
+  el("eyedrop-btn").disabled = false;
+  render(); renderMatrix(); renderPair();
+}
+function loadImageFromSrc(src, label) {
+  var img = new Image();
+  img.onload = function () {
+    el("srcimg").src = src;
+    el("srcimg")._w = img.width; el("srcimg")._h = img.height;
+    setPaletteFromImage(img);
+  };
+  img.onerror = function () { alert("Could not load that image."); };
+  img.src = src;
+}
+function loadImageFile(file) {
+  if (!file || file.type.indexOf("image/") !== 0) { alert("That is not an image file."); return; }
+  var rd = new FileReader();
+  rd.onload = function () { loadImageFromSrc(rd.result); };
+  rd.readAsDataURL(file);
+}
+function makeSampleImage() {
+  var cv = document.createElement("canvas");
+  cv.width = 480; cv.height = 300;
+  var ctx = cv.getContext("2d");
+  for (var x = 0; x < 480; x++) {
+    var hue = (x / 480) * 360;
+    ctx.fillStyle = "hsl(" + hue + ",70%,55%)";
+    ctx.fillRect(x, 0, 1, 200);
+  }
+  ctx.fillStyle = "#16233f"; ctx.fillRect(0, 200, 160, 100);
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(160, 200, 160, 100);
+  ctx.fillStyle = "#c0392b"; ctx.fillRect(320, 200, 160, 100);
+  ctx.fillStyle = "#f5d547"; ctx.beginPath(); ctx.arc(400, 250, 30, 0, 7); ctx.fill();
+  return cv;
+}
+
+// ---------- init (DOM only) ----------
+function init() {
+  var dz = el("dropzone"), fp = el("filepick");
+  dz.addEventListener("click", function () { fp.click(); });
+  dz.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fp.click(); }
+  });
+  fp.addEventListener("change", function () { if (fp.files[0]) loadImageFile(fp.files[0]); fp.value = ""; });
+  ["dragover", "dragenter"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.add("over"); });
+  });
+  ["dragleave", "drop"].forEach(function (ev) {
+    dz.addEventListener(ev, function (e) { e.preventDefault(); dz.classList.remove("over"); });
+  });
+  dz.addEventListener("drop", function (e) {
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) loadImageFile(e.dataTransfer.files[0]);
+  });
+  // Dropping a file anywhere outside the dropzone must not navigate the page away.
+  ["dragover", "drop"].forEach(function (ev) {
+    window.addEventListener(ev, function (e) { e.preventDefault(); });
+  });
+  document.addEventListener("paste", function (e) {
+    var items = (e.clipboardData && e.clipboardData.items) || [];
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image/") === 0) { loadImageFile(items[i].getAsFile()); return; }
+    }
+  });
+  el("sample-btn").addEventListener("click", function () {
+    var cv = makeSampleImage();
+    var img = new Image();
+    img.onload = function () {
+      el("srcimg").src = cv.toDataURL();
+      el("srcimg")._w = img.width; el("srcimg")._h = img.height;
+      setPaletteFromImage(img);
+    };
+    img.src = cv.toDataURL();
+  });
+  el("reextract-btn").addEventListener("click", function () {
+    var img = el("srcimg");
+    if (img._w) {
+      var real = new Image();
+      real.onload = function () { setPaletteFromImage(real); };
+      real.src = img.src;
+    }
+  });
+  el("eyedrop-btn").addEventListener("click", function () {
+    state.eyedrop = !state.eyedrop;
+    el("eyedrop-btn").textContent = "Eyedropper: " + (state.eyedrop ? "on" : "off");
+    el("eyedrop-btn").classList.toggle("active", state.eyedrop);
+    el("srcimg").classList.toggle("eyedrop", state.eyedrop);
+    el("dropper-out").textContent = "";
+  });
+  el("srcimg").addEventListener("click", function (e) {
+    if (!state.eyedrop) return;
+    var img = el("srcimg");
+    var r = img.getBoundingClientRect();
+    var sx = r.width / (img._w || img.naturalWidth);
+    var sy = r.height / (img._h || img.naturalHeight);
+    var cv = document.createElement("canvas");
+    cv.width = 1; cv.height = 1;
+    var ctx = cv.getContext("2d");
+    ctx.drawImage(img, -(e.clientX - r.left) / sx, -(e.clientY - r.top) / sy, (img._w || img.naturalWidth), (img._h || img.naturalHeight));
+    var d = ctx.getImageData(0, 0, 1, 1).data;
+    if (d[3] < 128) { el("dropper-out").textContent = "That pixel is transparent; nothing added."; return; }
+    var hex = rgbToHex(d[0], d[1], d[2]).toLowerCase();
+    if (state.palette.indexOf(hex) !== -1) { el("dropper-out").textContent = hex + " is already in the palette."; return; }
+    if (state.palette.length >= 12) { el("dropper-out").textContent = "Palette is full (12 colors)."; return; }
+    state.palette.push(hex);
+    el("dropper-out").textContent = "";
+    render(); renderMatrix(); renderPair();
+  });
+  el("slot-bg").addEventListener("click", function () {
+    state.slot = "bg";
+    el("slot-bg").classList.add("active"); el("slot-fg").classList.remove("active");
+    render();
+  });
+  el("slot-fg").addEventListener("click", function () {
+    state.slot = "fg";
+    el("slot-fg").classList.add("active"); el("slot-bg").classList.remove("active");
+    render();
+  });
+  el("nudge-btn").addEventListener("click", function () {
+    var out = el("nudge-out");
+    if (!state.bg || !state.fg) return;
+    var r = contrast(state.fg, state.bg);
+    if (r >= 4.5) { out.textContent = "Already AA (" + fmtRatio(r) + ":1). No nudge needed."; return; }
+    var adj = nudgeToAA(state.fg, state.bg);
+    if (!adj) { out.textContent = "No lightness shift reaches AA against this background."; return; }
+    var nr = contrast(adj, state.bg);
+    state.fg = adj;
+    render();                     // rebuild swatches so the Text tag follows the new color
+    renderPair();                 // resets nudge state; set the value after
+    state.nudgedColor = adj;
+    el("nudge-add").disabled = false;
+    out.textContent = "Nudged text to " + adj + ", now " + fmtRatio(nr) + ":1 (" + gradeLabel(nr) + ").";
+  });
+  el("nudge-add").addEventListener("click", function () {
+    var c = state.nudgedColor;
+    if (!c) return;
+    if (state.palette.indexOf(c) !== -1) {
+      el("nudge-out").textContent = c + " is already in the palette.";
+    } else if (state.palette.length >= 12) {
+      el("nudge-out").textContent = "Palette is full (12 colors).";
+    } else {
+      state.palette.push(c);
+      render(); renderMatrix(); renderPair();
+      el("nudge-out").textContent = c + " added to the palette.";
+      return;
+    }
+    el("nudge-add").disabled = true;
+    state.nudgedColor = null;
+  });
+  el("theme-btn").addEventListener("click", function () {
+    state.dark = !state.dark;
+    document.body.classList.toggle("dark", state.dark);
+    el("theme-btn").textContent = "Preview: " + (state.dark ? "dark" : "light");
+  });
+  function guard(fn) {
+    return function () {
+      if (!state.palette.length) { el("exp-out").textContent = "Load a palette first."; return; }
+      fn();
+    };
+  }
+  el("exp-css").addEventListener("click", guard(function () {
+    var t = buildCSS(state.palette);
+    copyText(t).then(function (ok) { showCopyResult(ok, t, "CSS custom properties copied."); });
+  }));
+  el("exp-tailwind").addEventListener("click", guard(function () {
+    var t = buildTailwind(state.palette);
+    copyText(t).then(function (ok) { showCopyResult(ok, t, "Tailwind color object copied."); });
+  }));
+  el("exp-json").addEventListener("click", guard(function () {
+    var t = buildJSON(state.palette);
+    copyText(t).then(function (ok) { showCopyResult(ok, t, "JSON copied."); });
+  }));
+  el("exp-png").addEventListener("click", guard(function () {
+    var p = state.palette, n = p.length;
+    var cv = document.createElement("canvas");
+    cv.width = n * 120; cv.height = 120;
+    var ctx = cv.getContext("2d");
+    p.forEach(function (h, i) {
+      ctx.fillStyle = h;
+      ctx.fillRect(i * 120, 0, 120, 120);
+      ctx.fillStyle = contrast("#ffffff", h) >= 4.5 ? "#ffffff" : "#000000";
+      ctx.font = "14px monospace";
+      ctx.fillText(h, i * 120 + 10, 110);
+    });
+    var a = document.createElement("a");
+    a.download = "palette.png";
+    a.href = cv.toDataURL("image/png");
+    document.body.appendChild(a); a.click(); a.remove();
+    el("exp-out").textContent = "PNG strip downloaded.";
+  }));
+  var fromHash = hashToPalette(location.hash || "");
+  if (fromHash) {
+    state.palette = fromHash;
+    render(); renderPair(); syncHash();
+  }
+  renderMatrix();
+}
+if (typeof document !== "undefined" && document.getElementById) {
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
+}
+</script>
+</body>
+</html>
